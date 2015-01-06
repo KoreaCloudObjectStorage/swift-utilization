@@ -1,0 +1,28 @@
+Source: swiftutilization
+Maintainer: A2 company <a2company@a2company.co.kr>
+Section: python
+Priority: optional
+Build-Depends:
+ python-setuptools (>= 0.6b3),
+ python-all (>= 2.6.6-3),
+ debhelper (>= 7)
+Standards-Version: 3.9.1
+
+Package: python-swiftutilization
+Architecture: all
+Depends: ${misc:Depends}, ${python:Depends}
+Provides: ${python:Provides}
+Breaks: swift (<< 1.13.1~rc1-0ubuntu1~)
+Replaces: swift (<< 1.13.1~rc1-0ubuntu1~)
+Description: Middleware to Billing
+
+Package: swift-utilization-aggregator
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python:Depends}
+Provides: ${python:Provides}
+Breaks: swift (<< 1.13.1~rc1-0ubuntu1~)
+Replaces: swift (<< 1.13.1~rc1-0ubuntu1~)
+Description: swift-utilization-aggregator
+

@@ -26,7 +26,7 @@ class UtilizationAggregator(Daemon):
         self.aggregate_account = '.utilization'
         self.sample_account = '.transfer'
         conf_path = conf.get('__file__') or \
-                    '/etc/swift/utilization-aggregator.conf'
+                    '/etc/swift/swift-utilization-aggregator.conf'
         request_tries = int(conf.get('request_tries') or 3)
         self.swift = InternalClient(conf_path,
                                     'Swift Utilization Aggregator',

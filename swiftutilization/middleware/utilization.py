@@ -6,10 +6,10 @@ from datetime import datetime
 from swift.common.swob import Request, Response
 from swift.common.utils import get_logger, InputProxy, \
     normalize_timestamp, get_remote_client
-from swift.common.wsgi import make_pre_authed_env, \
-    make_pre_authed_request
+from swift.common.wsgi import make_pre_authed_request
 from swift.common.ring import Ring
 from swift.common.bufferedhttp import http_connect
+
 
 class UtilizationMiddleware(object):
     def __init__(self, app, conf, *args, **kwargs):
