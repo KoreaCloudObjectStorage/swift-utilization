@@ -17,6 +17,7 @@ from swift.common.http import HTTP_NOT_FOUND, HTTP_CONFLICT
 from swift.common.bufferedhttp import http_connect
 from swift.common.ring import Ring
 
+
 class UtilizationAggregator(Daemon):
     def __init__(self, conf):
         self.conf = conf
@@ -53,22 +54,6 @@ class UtilizationAggregator(Daemon):
             dump_recon_cache({'object_aggregation_pass': elapsed,
                               'aggregation_last_pass': self.report_containers},
                              self.rcache, self.logger)
-            # for debug
-            print '######### aggregate account #######'
-            for c in self.swift.iter_containers(self.aggregate_account):
-                print 'c:' + c['name']
-                for o in self.swift.iter_objects(self.aggregate_account, c['name']):
-                    print 'o:' + o['name']
-#                    self.swift.delete_object(self.aggregate_account,c['name'], o['name'])
-#                self.swift.delete_container(self.aggregate_account,c['name'])
-            print '######### sample account #######'
-            for c in self.swift.iter_containers(self.sample_account):
-                print 'c:' + c['name']
-                for o in self.swift.iter_objects(self.sample_account, c['name']):
-                    print 'o:' + o['name']
-#                    self.swift.delete_object(self.aggregate_account,c['name'], o['name'])
-#                self.swift.delete_container(self.aggregate_account,c['name'])
-
 
         elif time() - self.report_last_time >= self.report_interval:
             elapsed = time() - self.report_first_time
@@ -102,16 +87,14 @@ class UtilizationAggregator(Daemon):
                         pool.spawn_n(self.aggregate_container, container)
             pool.waitall()
             for container in containers_to_delete:
-              try:
-                  self.logger.debug('delete container: %s' % container)
-                  self.swift.delete_container(
-                      self.sample_account,
-                      container,
-                      acceptable_statuses=(2, HTTP_NOT_FOUND, HTTP_CONFLICT))
-              except (Exception, Timeout) as err:
-                  self.logger.exception(
-                      _('Exception while deleting container %s %s') %
-                        (container, str(err)))
+                try:
+                    self.logger.debug('delete container: %s' % container)
+                    self.swift.delete_container(self.sample_account, container,
+                                                acceptable_statuses=(2, HTTP_NOT_FOUND, HTTP_CONFLICT))
+                except (Exception, Timeout) as err:
+                    self.logger.exception(
+                        _('Exception while deleting container %s %s') %
+                         (container, str(err)))
             self.logger.debug(_('Run end'))
             self.report(final=True)
         except (Exception, Timeout):
