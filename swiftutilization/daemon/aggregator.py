@@ -24,7 +24,7 @@ class UtilizationAggregator(Daemon):
         self.logger = get_logger(conf, log_route='utilization-aggregator')
         self.interval = int(conf.get('interval') or 60)
         self.aggregate_account = '.utilization'
-        self.sample_account = '.transfer'
+        self.sample_account = '.transfer_record'
         conf_path = conf.get('__file__') or \
                     '/etc/swift/swift-utilization-aggregator.conf'
         request_tries = int(conf.get('request_tries') or 3)
@@ -42,7 +42,7 @@ class UtilizationAggregator(Daemon):
         if self.concurrency < 1:
             raise ValueError("concurrency must be set to at least 1")
         self.container_ring = Ring('/etc/swift', ring_name='container')
-        self.sample_rate = 300
+        self.sample_rate = 600
 
     def report(self, final=False):
         if final:
@@ -76,7 +76,7 @@ class UtilizationAggregator(Daemon):
             for c in self.swift.iter_containers(self.sample_account):
                 container = c['name']
                 try:
-                    account, timestamp = container.rsplit('_', 1)
+                    timestamp, account = container.split('_', 1)
                 except ValueError:
                     self.logger.debug('ValueError: %s, '
                                       'need more than 1 value to unpack' % \
@@ -123,28 +123,28 @@ class UtilizationAggregator(Daemon):
     def aggregate_container(self, container):
         start_time = time()
         try:
-            bytes_received = 0
+            bytes_recv = 0
             bytes_sent = 0
             for o in self.swift.iter_objects(self.sample_account, container):
-                timestamp, user_id, data, ip, trans_id = \
-                   o['name'].split('/', 4)
-                transfer = data.split('_', 1)
-                bytes_received += int(transfer[0])
-                bytes_sent += int(transfer[1])
+                name = o['name']
+                timestamp, bytes_rv, bytes_st, trans_id = name.split('/')
+                bytes_recv += int(bytes_rv)
+                bytes_sent += int(bytes_st)
                 self.report_objects += 1
-                self.swift.delete_object(self.sample_account, container, o['name'])
+                self.swift.delete_object(self.sample_account, container,
+                                         o['name'])
 
-            account, timestamp = container.rsplit('_', 1)
-            container_count, object_count, bytes_used = \
-                self._get_account_info(account)
+            timestamp, tenant_id, account  = container.split('_', 2)
+            timestamp = int(float(timestamp))
+            container_cnt, obj_cnt, bt_used = self._get_account_info(account)
 
-            date = datetime.utcfromtimestamp(float(timestamp)).isoformat()
-            t_object = 'transfer/%s/%d_%d_%d' % (date, bytes_received,
-                                                 bytes_sent, self.report_objects)
-            u_object = 'usage/%s/%d_%d_%d' % (date, container_count,
-                                              object_count, bytes_used)
-            self._hidden_update(account, t_object)
-            self._hidden_update(account, u_object)
+            t_object = 'transfer/%d/%d_%d_%d' % (timestamp, bytes_recv,
+                                                 bytes_sent,
+                                                 self.report_objects)
+            u_object = 'usage/%d/%d_%d_%d' % (timestamp, container_cnt,
+                                              obj_cnt, bt_used)
+            self._hidden_update(tenant_id, t_object)
+            self._hidden_update(tenant_id, u_object)
         except (Exception, Timeout) as err:
             self.logger.increment('errors')
             self.logger.exception(
