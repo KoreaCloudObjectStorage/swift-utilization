@@ -1,9 +1,10 @@
-# coding=utf-8
+# -*- coding: utf-8 -*-
 
 import calendar
 import json
 import time
 from datetime import datetime
+
 from swift.common.swob import Request, Response
 from swift.common.utils import get_logger, InputProxy, \
     normalize_timestamp
@@ -40,7 +41,7 @@ class UtilizationMiddleware(object):
         return True
 
     def iso8601_to_timestamp(self, strtime):
-        return calendar.timegm(datetime.strptime(strtime,"%Y-%m-%dT%H:%M:%S")
+        return calendar.timegm(datetime.strptime(strtime, "%Y-%m-%dT%H:%M:%S")
                                .timetuple())
 
     def iter_objects(self, env, path, prefix, marker, end, count):
@@ -76,7 +77,7 @@ class UtilizationMiddleware(object):
 
     def retrive_utilization_data(self, env, tenant_id, start, end, count):
         path = '/v1/%s/%s' % (self.aggregate_account, tenant_id)
-        data = {}
+        data = dict()
         data['transfer'] = {}
         data['utilization'] = {}
         marker = 'transfer/%d' % start
@@ -122,7 +123,7 @@ class UtilizationMiddleware(object):
         if end is None:
             end = datetime.utcfromtimestamp(int(time.time())).isoformat()
 
-        #start time is "rounded down"
+        # start time is "rounded down"
         start_ts = (self.iso8601_to_timestamp(start) // 3600) * 3600
         # end time is "rounded up"
         end_ts = (self.iso8601_to_timestamp(end) // 3600 + 1) * 3600
@@ -146,7 +147,7 @@ class UtilizationMiddleware(object):
         content['swift_account'] = self.swift_account(req.environ.copy(),
                                                       tenant_id)
         return Response(request=req, body=json.dumps(content),
-                            content_type="application/json")
+                        content_type="application/json")
 
     def __call__(self, env, start_response):
         self.logger.debug('Calling Utilization Middleware')
@@ -162,7 +163,7 @@ class UtilizationMiddleware(object):
 
         remote_user = env.get('REMOTE_USER')
         if not remote_user or (isinstance(remote_user, basestring) and
-           remote_user.startswith('.wsgi')):
+                               remote_user.startswith('.wsgi')):
             self.logger.debug('### SKIP: REMOTE_USER is %s' % remote_user)
             return self.app(env, start_response)
 
@@ -193,7 +194,8 @@ class UtilizationMiddleware(object):
                     chunk = next(iterator)
             finally:
                 try:
-                    self.publish_sample(env, account, input_proxy.bytes_received,
+                    self.publish_sample(env, account,
+                                        input_proxy.bytes_received,
                                         bytes_sent)
                 except Exception:
                     self.logger.exception('Failed to publish samples')
@@ -208,7 +210,8 @@ class UtilizationMiddleware(object):
 
     def publish_sample(self, env, account, bytes_received, bytes_sent):
         timestamp = normalize_timestamp(time.time())
-        sample_time = (float(timestamp)//self.sample_rate+1)*self.sample_rate
+        sample_time = (float(
+            timestamp) // self.sample_rate + 1) * self.sample_rate
         trans_id = env.get('swift.trans_id')
         tenant_id = env.get('HTTP_X_TENANT_ID')
 

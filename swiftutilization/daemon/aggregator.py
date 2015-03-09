@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
 from time import time
-from datetime import datetime
 from random import random
 from os.path import join
 
 from eventlet import sleep, Timeout
 from eventlet.greenpool import GreenPool
-
 from swift import gettext_ as _
 from swift.common.daemon import Daemon
 from swift.common.internal_client import InternalClient
-
 from swift.common.utils import get_logger, dump_recon_cache, \
     normalize_timestamp
 from swift.common.http import HTTP_NOT_FOUND, HTTP_CONFLICT
@@ -48,9 +45,9 @@ class UtilizationAggregator(Daemon):
         if final:
             elapsed = time() - self.report_first_time
             self.logger.info(_('Pass completed in %ds; %d containers,'
-                             ' %d objects aggregated') %
+                               ' %d objects aggregated') %
                              (elapsed, self.report_containers,
-                             self.report_objects))
+                              self.report_objects))
             dump_recon_cache({'object_aggregation_pass': elapsed,
                               'aggregation_last_pass': self.report_containers},
                              self.rcache, self.logger)
@@ -82,7 +79,9 @@ class UtilizationAggregator(Daemon):
                                       'need more than 1 value to unpack' % \
                                       container)
                 else:
-                    if float(timestamp) <= (float(time())//self.sample_rate)*self.sample_rate:
+                    if float(timestamp) <= (
+                                float(
+                                        time()) // self.sample_rate) * self.sample_rate:
                         containers_to_delete.append(container)
                         pool.spawn_n(self.aggregate_container, container)
             pool.waitall()
@@ -90,11 +89,13 @@ class UtilizationAggregator(Daemon):
                 try:
                     self.logger.debug('delete container: %s' % container)
                     self.swift.delete_container(self.sample_account, container,
-                                                acceptable_statuses=(2, HTTP_NOT_FOUND, HTTP_CONFLICT))
+                                                acceptable_statuses=(
+                                                    2, HTTP_NOT_FOUND,
+                                                    HTTP_CONFLICT))
                 except (Exception, Timeout) as err:
                     self.logger.exception(
                         _('Exception while deleting container %s %s') %
-                         (container, str(err)))
+                        (container, str(err)))
             self.logger.debug(_('Run end'))
             self.report(final=True)
         except (Exception, Timeout):
@@ -134,7 +135,7 @@ class UtilizationAggregator(Daemon):
                 self.swift.delete_object(self.sample_account, container,
                                          o['name'])
 
-            timestamp, tenant_id, account  = container.split('_', 2)
+            timestamp, tenant_id, account = container.split('_', 2)
             timestamp = int(float(timestamp))
             container_cnt, obj_cnt, bt_used = self._get_account_info(account)
 
