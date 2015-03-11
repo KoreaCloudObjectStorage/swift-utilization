@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 
-import calendar
 import json
 import time
 from datetime import datetime
+
+from swiftutilization import iso8601_to_timestamp, timestamp_to_iso8601
 
 from swift.common.swob import Request, Response
 from swift.common.utils import get_logger, InputProxy, \
@@ -21,7 +22,7 @@ class UtilizationMiddleware(object):
         self.aggregate_account = '.utilization'
         self.logger = get_logger(self.conf, log_route='utilization')
         self.container_ring = Ring('/etc/swift', ring_name='container')
-        self.sample_rate = 600
+        self.sample_rate = int(self.conf.get('sample_rate', 600))
 
     def swift_account(self, env, tenant_id):
         path = '/v1/%s/%s?format=json&prefix=account/' \
@@ -33,22 +34,45 @@ class UtilizationMiddleware(object):
         return json.loads(resp.body)[0]['name'].split('/')[1]
 
     def check_api_call(self, env):
-        if env['REQUEST_METHOD'] != 'GET' and 'RAW_PATH_INFO' not in env:
-            return False
+        path = env.get('RAW_PATH_INFO', None)
 
-        if env['RAW_PATH_INFO'] != '/api/v1/metering':
-            return False
-        return True
+        if env['REQUEST_METHOD'] == 'GET' and path == '/api/v1/metering':
+            return True
+        return False
 
-    def iso8601_to_timestamp(self, strtime):
-        return calendar.timegm(datetime.strptime(strtime, "%Y-%m-%dT%H:%M:%S")
-                               .timetuple())
+    def get_account_info(self, env, account):
+        path = '/v1/%s' % account
+        req = make_pre_authed_request(env, 'HEAD', path)
+        resp = req.get_response(self.app)
+        if not  resp.status_int // 100 == 2:
+            return (0, 0, 0)
+        return (int(resp.headers.get('x-account-container-count', 0)),
+                int(resp.headers.get('x-account-object-count', 0)),
+                int(resp.headers.get('x-account-bytes-used', 0)))
+
+    def record_usage_data(self, env, tenant_id, account, timestamp):
+        path = '/v1/%s/%s?prefix=usage/%d&format=json' % (
+            self.aggregate_account, tenant_id, timestamp)
+        req = make_pre_authed_request(env, 'GET', path)
+        resp = req.get_response(self.app)
+        if resp.status_int == 404:
+            return
+        body = json.loads(resp.body)
+
+        if len(body) != 0:
+            return
+
+        container_cnt, obj_cnt, bt_used = self.get_account_info(env, account)
+        u_object = 'usage/%d/%d_%d_%d' % (timestamp, container_cnt,
+                                          obj_cnt, bt_used)
+
+        self.put_hidden_object(self.aggregate_account, tenant_id, u_object)
 
     def iter_objects(self, env, path, prefix, marker, end, count):
         path_with_params = '%s?format=json&prefix=%s' % (path, prefix)
         seg = ''
         force_break = False
-        while True:
+        while count > 0:
             l = 1000 if count > 1000 else count
             count -= 1000
             rpath = path_with_params + ('&marker=%s' % marker) + (
@@ -124,15 +148,18 @@ class UtilizationMiddleware(object):
             end = datetime.utcfromtimestamp(int(time.time())).isoformat()
 
         # start time is "rounded down"
-        start_ts = (self.iso8601_to_timestamp(start) // 3600) * 3600
+        start_ts = iso8601_to_timestamp(start)
         # end time is "rounded up"
-        end_ts = (self.iso8601_to_timestamp(end) // 3600 + 1) * 3600
-        objsize = (end_ts - start_ts) / self.sample_rate
-
+        end_ts = iso8601_to_timestamp(end)
         if start_ts > end_ts:
             return Response(status="400 Bad Request",
                             content_type="text/plain",
                             body="start time must be before the end time")
+
+        objsize = (end_ts - start_ts) / self.sample_rate
+
+        end_ts = (end_ts // 3600 + 1) * 3600
+        start_ts = ( start_ts // 3600) * 3600
 
         content = self.retrive_utilization_data(req.environ.copy(), tenant_id,
                                                 start_ts, end_ts, objsize)
@@ -141,8 +168,8 @@ class UtilizationMiddleware(object):
                             body="Internal server error.",
                             content_type="text/plain")
 
-        content['period_start'] = start
-        content['period_end'] = end
+        content['period_start'] = timestamp_to_iso8601(start_ts)
+        content['period_end'] = timestamp_to_iso8601(end_ts)
         content['tenant_id'] = tenant_id
         content['swift_account'] = self.swift_account(req.environ.copy(),
                                                       tenant_id)
@@ -215,10 +242,13 @@ class UtilizationMiddleware(object):
         trans_id = env.get('swift.trans_id')
         tenant_id = env.get('HTTP_X_TENANT_ID')
 
-        # check if account informatin object is existed.
+        # check if account information object is existed.
         if not self.swift_account(env, tenant_id):
             obj = 'account/%s' % account
             self.put_hidden_object(self.aggregate_account, tenant_id, obj)
+
+        # recording account's storage usage data
+        self.record_usage_data(env, tenant_id, account, sample_time)
 
         container = '%s_%s_%s' % (sample_time, tenant_id, account)
 

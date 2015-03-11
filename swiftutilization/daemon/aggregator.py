@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
+import hashlib
 from time import time
 from random import random
 from os.path import join
+
+from swiftutilization import iso8601_to_timestamp
 
 from eventlet import sleep, Timeout
 from eventlet.greenpool import GreenPool
@@ -38,8 +41,12 @@ class UtilizationAggregator(Daemon):
         self.concurrency = int(conf.get('concurrency', 1))
         if self.concurrency < 1:
             raise ValueError("concurrency must be set to at least 1")
+        self.processes = int(self.conf.get('processes', 0))
+        self.process = int(self.conf.get('process', 0))
         self.container_ring = Ring('/etc/swift', ring_name='container')
-        self.sample_rate = 600
+        self.sample_rate = int(self.conf.get('sample_rate', 600))
+        self.last_chk = iso8601_to_timestamp(self.conf.get(
+            'service_start'))
 
     def report(self, final=False):
         if final:
@@ -59,6 +66,7 @@ class UtilizationAggregator(Daemon):
             self.report_last_time = time()
 
     def run_once(self, *args, **kwargs):
+        processes, process = self.get_process_values(kwargs)
         pool = GreenPool(self.concurrency)
         self.report_first_time = self.report_last_time = time()
         self.report_objects = 0
@@ -74,14 +82,18 @@ class UtilizationAggregator(Daemon):
                 container = c['name']
                 try:
                     timestamp, account = container.split('_', 1)
+                    timestamp = float(timestamp)
                 except ValueError:
                     self.logger.debug('ValueError: %s, '
                                       'need more than 1 value to unpack' % \
                                       container)
                 else:
-                    if float(timestamp) <= (
-                                float(
-                                        time()) // self.sample_rate) * self.sample_rate:
+                    if processes > 0:
+                        obj_proc = int(hashlib.md5(container).hexdigest(), 16)
+                        if obj_proc % processes != process:
+                            continue
+                    n = (float(time()) // self.sample_rate) * self.sample_rate
+                    if timestamp <= n:
                         containers_to_delete.append(container)
                         pool.spawn_n(self.aggregate_container, container)
             pool.waitall()
@@ -96,6 +108,16 @@ class UtilizationAggregator(Daemon):
                     self.logger.exception(
                         _('Exception while deleting container %s %s') %
                         (container, str(err)))
+
+            # fillup lossed usage data
+            for c in self.swift.iter_containers(self.aggregate_account):
+                tenant_id = c['name']
+                if processes > 0:
+                    obj_proc = int(hashlib.md5(tenant_id).hexdigest(), 16)
+                    if obj_proc % processes != process:
+                        continue
+                self.fillup_lossed_usage_data(tenant_id)
+
             self.logger.debug(_('Run end'))
             self.report(final=True)
         except (Exception, Timeout):
@@ -121,31 +143,64 @@ class UtilizationAggregator(Daemon):
             if elapsed < self.interval:
                 sleep(random() * (self.interval - elapsed))
 
+    def get_process_values(self, kwargs):
+        """
+        Gets the processes, process from the kwargs if those values exist.
+
+        Otherwise, return processes, process set in the config file.
+
+        :param kwargs: Keyword args passed into the run_forever(), run_once()
+                       methods.  They have values specified on the command
+                       line when the daemon is run.
+        """
+        if kwargs.get('processes') is not None:
+            processes = int(kwargs['processes'])
+        else:
+            processes = self.processes
+
+        if kwargs.get('process') is not None:
+            process = int(kwargs['process'])
+        else:
+            process = self.process
+
+        if process < 0:
+            raise ValueError(
+                'process must be an integer greater than or equal to 0')
+
+        if processes < 0:
+            raise ValueError(
+                'processes must be an integer greater than or equal to 0')
+
+        if processes and process >= processes:
+            raise ValueError(
+                'process must be less than or equal to processes')
+
+        return processes, process
+
     def aggregate_container(self, container):
         start_time = time()
         try:
             bytes_recv = 0
             bytes_sent = 0
+            objs = list()
             for o in self.swift.iter_objects(self.sample_account, container):
                 name = o['name']
+                list.append(name)
                 timestamp, bytes_rv, bytes_st, trans_id = name.split('/')
                 bytes_recv += int(bytes_rv)
                 bytes_sent += int(bytes_st)
                 self.report_objects += 1
-                self.swift.delete_object(self.sample_account, container,
-                                         o['name'])
+
+            for o in objs:
+                self.swift.delete_object(self.sample_account, container, o)
 
             timestamp, tenant_id, account = container.split('_', 2)
             timestamp = int(float(timestamp))
-            container_cnt, obj_cnt, bt_used = self._get_account_info(account)
 
             t_object = 'transfer/%d/%d_%d_%d' % (timestamp, bytes_recv,
                                                  bytes_sent,
                                                  self.report_objects)
-            u_object = 'usage/%d/%d_%d_%d' % (timestamp, container_cnt,
-                                              obj_cnt, bt_used)
             self._hidden_update(tenant_id, t_object)
-            self._hidden_update(tenant_id, u_object)
         except (Exception, Timeout) as err:
             self.logger.increment('errors')
             self.logger.exception(
@@ -155,15 +210,13 @@ class UtilizationAggregator(Daemon):
         self.logger.timing_since('timing', start_time)
         self.report()
 
-    def _get_account_info(
-            self, account, acceptable_statuses=(2, HTTP_NOT_FOUND)):
-        path = self.swift.make_path(account)
-        resp = self.swift.make_request('HEAD', path, {}, acceptable_statuses)
-        if not resp.status_int // 100 == 2:
-            return (0, 0, 0)
-        return (int(resp.headers.get('x-account-container-count', 0)),
-                int(resp.headers.get('x-account-object-count', 0)),
-                int(resp.headers.get('x-account-bytes-used', 0)))
+    def account_info(self, tenant_id, timestamp):
+        path = '/v1/%s/%s?prefix=usage/%d' % (self.aggregate_account,
+                                              tenant_id, timestamp)
+        resp = self.swift.make_request('GET', path, {}, (2,))
+        usages = resp.body.split('/', 2)[2].rstrip()
+        cont_cnt, obj_cnt, bt_used = usages.split('_')
+        return int(cont_cnt), int(obj_cnt), int(bt_used)
 
     def _hidden_update(self, container, obj, method='PUT'):
         hidden_path = '/%s/%s/%s' % (self.aggregate_account, container, obj)
@@ -186,3 +239,22 @@ class UtilizationAggregator(Daemon):
                                 action_headers)
             response = conn.getresponse()
             response.read()
+
+    def fillup_lossed_usage_data(self, tenant_id):
+        now = (float(time()) // self.sample_rate) * self.sample_rate
+        cont_cnt = 0
+        obj_cnt = 0
+        bt_used = 0
+
+        while self.last_chk <= now:
+            path = '/v1/%s/%s?prefix=usage/%d' % (self.aggregate_account,
+                                                  tenant_id, self.last_chk)
+            resp = self.swift.make_request('GET', path, {}, (2,))
+            if len(resp.body) != 0:
+                cont_cnt, obj_cnt, bt_used = self.account_info(tenant_id,
+                                                               self.last_chk)
+            else:
+                obj = 'usage/%d/%d_%d_%d' % (self.last_chk, cont_cnt,
+                                             obj_cnt, bt_used)
+                self._hidden_update(tenant_id, obj)
+            self.last_chk += self.sample_rate

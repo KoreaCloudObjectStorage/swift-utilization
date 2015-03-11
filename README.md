@@ -19,3 +19,4 @@ Install
 
     [filter:swiftutilization]
     use = egg:swiftutilization#swiftutilization
+    sample_rate = 600
