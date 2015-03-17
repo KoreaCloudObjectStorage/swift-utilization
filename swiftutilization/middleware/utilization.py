@@ -132,6 +132,13 @@ class UtilizationMiddleware(object):
     def GET(self, req):
         start = req.params.get('start')
         tenant_id = req.params.get('tenantid')
+        identity = req.environ.get('HTTP_X_IDENTITY_STATUS')
+        roles = req.environ.get('keystone.identity', None)
+
+        if identity == 'Invalid' or not roles or 'admin' not in roles['roles']:
+            return Response(request=req, status="403 Forbidden",
+                            body="Access Denied",
+                            content_type="text/plain")
 
         if not tenant_id:
             return Response(request=req, status="400 Bad Request",
