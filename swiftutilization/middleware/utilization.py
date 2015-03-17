@@ -147,6 +147,13 @@ class UtilizationMiddleware(object):
         if end is None:
             end = datetime.utcfromtimestamp(int(time.time())).isoformat()
 
+        # check if tenant_id's users utilization was recorded.
+        account = self.swift_account(req.environ.copy(), tenant_id)
+        if not account:
+            return Response(status="400 Bad Request",
+                            content_type="text/plain",
+                            body="This tenant_id never used.")
+
         # start time is "rounded down"
         start_ts = iso8601_to_timestamp(start)
         # end time is "rounded up"
@@ -171,8 +178,7 @@ class UtilizationMiddleware(object):
         content['period_start'] = timestamp_to_iso8601(start_ts)
         content['period_end'] = timestamp_to_iso8601(end_ts)
         content['tenant_id'] = tenant_id
-        content['swift_account'] = self.swift_account(req.environ.copy(),
-                                                      tenant_id)
+        content['swift_account'] = account
         return Response(request=req, body=json.dumps(content),
                         content_type="application/json")
 
