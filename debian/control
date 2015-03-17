@@ -10,19 +10,14 @@ Standards-Version: 3.9.1
 
 Package: python-swiftutilization
 Architecture: all
-Depends: ${misc:Depends}, ${python:Depends}
+Depends: ${misc:Depends}
 Provides: ${python:Provides}
-Breaks: swift (<< 1.13.1~rc1-0ubuntu1~)
-Replaces: swift (<< 1.13.1~rc1-0ubuntu1~)
 Description: Middleware to Billing
 
 Package: swift-utilization-aggregator
 Architecture: all
 Depends:
- ${misc:Depends},
- ${python:Depends}
+ ${misc:Depends}
 Provides: ${python:Provides}
-Breaks: swift (<< 1.13.1~rc1-0ubuntu1~)
-Replaces: swift (<< 1.13.1~rc1-0ubuntu1~)
 Description: swift-utilization-aggregator
 

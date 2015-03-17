@@ -1,3 +1,2 @@
-swift>=1.13.1
-python-dateutil>2.2
-
+swift>=2.2.0
+python-dateutil>=2.2

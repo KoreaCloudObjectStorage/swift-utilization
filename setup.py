@@ -8,7 +8,7 @@ setup(name='swiftutilization',
       author_email='admin@a2company.co.kr',
       packages=['swiftutilization', 'swiftutilization/middleware',
                 'swiftutilization/daemon'],
-      install_requires=['swift >= 1.13.0'],
+      install_requires=['swift >= 2.2.0'],
       entry_points={'paste.filter_factory':
                     ['swiftutilization='
                      'swiftutilization.middleware.utilization:filter_factory']},
