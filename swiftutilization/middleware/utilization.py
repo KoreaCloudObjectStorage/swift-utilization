@@ -28,6 +28,7 @@ class UtilizationMiddleware(object):
         path = '/v1/%s/%s?format=json&prefix=account/' \
                % (self.aggregate_account, tenant_id)
         req = make_pre_authed_request(env, 'GET', path)
+        req.environ['swift.proxy_access_log_made'] = True
         resp = req.get_response(self.app)
         if resp.status_int == 404:
             return None
@@ -43,6 +44,7 @@ class UtilizationMiddleware(object):
     def get_account_info(self, env, account):
         path = '/v1/%s' % account
         req = make_pre_authed_request(env, 'HEAD', path)
+        req.environ['swift.proxy_access_log_made'] = True
         resp = req.get_response(self.app)
         if not  resp.status_int // 100 == 2:
             return (0, 0, 0)
@@ -54,6 +56,7 @@ class UtilizationMiddleware(object):
         path = '/v1/%s/%s?prefix=usage/%d&format=json' % (
             self.aggregate_account, tenant_id, timestamp)
         req = make_pre_authed_request(env, 'GET', path)
+        req.environ['swift.proxy_access_log_made'] = True
         resp = req.get_response(self.app)
         if resp.status_int == 404:
             return
@@ -78,6 +81,7 @@ class UtilizationMiddleware(object):
             rpath = path_with_params + ('&marker=%s' % marker) + (
                 '&limit=%d' % l)
             req = make_pre_authed_request(env, 'GET', rpath)
+            req.environ['swift.proxy_access_log_made'] = True
             resp = req.get_response(self.app)
             segments = json.loads(resp.body)
             for seg in segments:
