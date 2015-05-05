@@ -109,17 +109,30 @@ class UtilizationMiddleware(object):
         data['transfer'] = {}
         data['utilization'] = {}
         marker = 'transfer/%d' % start
-        data['transfer']['bytes_in'] = 0
-        data['transfer']['bytes_out'] = 0
-        data['transfer']['req_count'] = 0
+        data['transfer'] = list()
         data['utilization']['container_count'] = 0
         data['utilization']['object_count'] = 0
         data['utilization']['bytes_used'] = 0
+
+        bytes_recvs = dict()
+        bytes_sents = dict()
+        req_counts = dict()
         for o in self.iter_objects(env, path, 'transfer/', marker, end, count):
-            bytes_recv, bytes_sent, req_cnt = o.split('/')[2].split('_')
-            data['transfer']['bytes_in'] += int(bytes_recv)
-            data['transfer']['bytes_out'] += int(bytes_sent)
-            data['transfer']['req_count'] += int(req_cnt)
+            bill_type = o.split('/')[2]
+            bytes_recv, bytes_sent, req_cnt = o.split('/')[3].split('_')
+            bytes_recvs[bill_type] = bytes_recvs.get(bill_type, 0) + int(
+                bytes_recv)
+            bytes_sents[bill_type] = bytes_sents.get(bill_type, 0) + int(
+                bytes_sent)
+            req_counts[bill_type] = req_counts.get(bill_type, 0) + int(req_cnt)
+
+        for bill_type, bt_rv in bytes_recvs.items():
+            d = dict()
+            d['bill_type'] = int(bill_type)
+            d['bytes_in'] = bt_rv
+            d['bytes_out'] = bytes_sents[bill_type]
+            d['req_count'] = req_counts[bill_type]
+            data['transfer'].append(d)
 
         last = None
         marker = 'usage/%d' % start
@@ -258,6 +271,7 @@ class UtilizationMiddleware(object):
             timestamp) // self.sample_rate + 1) * self.sample_rate
         trans_id = env.get('swift.trans_id')
         tenant_id = env.get('HTTP_X_TENANT_ID')
+        remote_addr = env.get('REMOTE_ADDR')
 
         # check if account information object is existed.
         if not self.swift_account(env, tenant_id):
@@ -269,7 +283,8 @@ class UtilizationMiddleware(object):
 
         container = '%s_%s_%s' % (sample_time, tenant_id, account)
 
-        obj = '%s/%d/%d/%s' % (timestamp, bytes_received, bytes_sent, trans_id)
+        obj = '%s/%d/%d/%s/%s' % (timestamp, bytes_received, bytes_sent,
+                                  trans_id, remote_addr)
         self.put_hidden_object(self.sample_account, container, obj)
 
     def put_hidden_object(self, account, container, obj):
