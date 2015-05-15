@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 import hashlib
+import urllib
+import json
 from time import time
 from random import random
 from os.path import join
 
-from swiftutilization import iso8601_to_timestamp
+from swiftutilization import iso8601_to_timestamp, timestamp_to_iso8601
 
 from eventlet import sleep, Timeout
 from eventlet.greenpool import GreenPool
@@ -47,6 +49,7 @@ class UtilizationAggregator(Daemon):
         self.sample_rate = int(self.conf.get('sample_rate', 600))
         self.last_chk = iso8601_to_timestamp(self.conf.get(
             'service_start'))
+        self.kinx_api_url = self.conf.get('kinx_api_url')
 
     def report(self, final=False):
         if final:
@@ -180,27 +183,37 @@ class UtilizationAggregator(Daemon):
     def aggregate_container(self, container):
         start_time = time()
         try:
-            bytes_recv = 0
-            bytes_sent = 0
-            objs = list()
-            for o in self.swift.iter_objects(self.sample_account, container):
-                name = o['name']
-                list.append(name)
-                timestamp, bytes_rv, bytes_st, trans_id = name.split('/')
-                bytes_recv += int(bytes_rv)
-                bytes_sent += int(bytes_st)
-                self.report_objects += 1
-
-            for o in objs:
-                self.swift.delete_object(self.sample_account, container, o)
+            objs_to_delete = list()
+            bytes_recvs = dict()
+            bytes_sents = dict()
 
             timestamp, tenant_id, account = container.split('_', 2)
             timestamp = int(float(timestamp))
 
-            t_object = 'transfer/%d/%d_%d_%d' % (timestamp, bytes_recv,
-                                                 bytes_sent,
-                                                 self.report_objects)
-            self._hidden_update(tenant_id, t_object)
+            for o in self.swift.iter_objects(self.sample_account, container):
+                name = o['name']
+                objs_to_delete.append(name)
+                ts, bytes_rv, bytes_st, trans_id, client_ip = name.split('/')
+
+
+                bill_type = self.get_billtype_by_client_ip(client_ip,
+                                                           timestamp)
+
+                bytes_recvs[bill_type] = bytes_recvs.get(bill_type,
+                                                         0) + int(bytes_rv)
+                bytes_sents[bill_type] = bytes_sents.get(bill_type,
+                                                         0) + int(bytes_st)
+                self.report_objects += 1
+
+            for o in objs_to_delete:
+                self.swift.delete_object(self.sample_account, container, o)
+
+            for bill_type, bt_rv in bytes_recvs.items():
+                t_object = 'transfer/%d/%d/%d_%d_%d' % (timestamp, bill_type,
+                                                        bt_rv,
+                                                        bytes_sents[bill_type],
+                                                        self.report_objects)
+                self._hidden_update(tenant_id, t_object)
         except (Exception, Timeout) as err:
             self.logger.increment('errors')
             self.logger.exception(
@@ -245,7 +258,6 @@ class UtilizationAggregator(Daemon):
         cont_cnt = 0
         obj_cnt = 0
         bt_used = 0
-
         while self.last_chk <= now:
             path = '/v1/%s/%s?prefix=usage/%d' % (self.aggregate_account,
                                                   tenant_id, self.last_chk)
@@ -258,3 +270,30 @@ class UtilizationAggregator(Daemon):
                                              obj_cnt, bt_used)
                 self._hidden_update(tenant_id, obj)
             self.last_chk += self.sample_rate
+
+    def get_billtype_by_client_ip(self, client_ip, timestamp):
+        end_ts = timestamp_to_iso8601(timestamp + self.sample_rate - 1)
+        start_ts = timestamp_to_iso8601(timestamp)
+
+        params = {'start': start_ts, 'end': end_ts}
+        path = self.kinx_api_url + '/?%s' % (urllib.urlencode(params))
+
+        data = json.loads(urllib.urlopen(path).read())
+        bill_type = -1
+        for r in data['ip_ranges']:
+            bill_type = r['bill_type']
+            for cidr in r['ip_range']:
+                if self.ip_in_cidr(client_ip, cidr):
+                    return bill_type
+        return -1
+
+    def ip_in_cidr(self, client_ip, cidr):
+        bt_to_bits = lambda b: bin(int(b))[2:].rjust(8, '0')
+        ip_to_bits = lambda ip: ''.join([bt_to_bits(b) for b in ip.split('.')])
+        client_ip_bits = ip_to_bits(client_ip)
+        ip, snet = cidr.split('/')
+        ip_bits = ip_to_bits(ip)
+        if client_ip_bits[:int(snet)] == ip_bits[:int(snet)]:
+            return True
+        else:
+            return False
