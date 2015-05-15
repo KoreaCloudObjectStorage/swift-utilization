@@ -187,10 +187,10 @@ class UtilizationMiddleware(object):
                             content_type="text/plain",
                             body="start time must be before the end time")
 
-        objsize = (end_ts - start_ts) / self.sample_rate
-
         end_ts = (end_ts // 3600 + 1) * 3600
-        start_ts = ( start_ts // 3600) * 3600
+        start_ts = (start_ts // 3600) * 3600
+
+        objsize = (end_ts - start_ts) / self.sample_rate
 
         content = self.retrive_utilization_data(req.environ.copy(), tenant_id,
                                                 start_ts, end_ts, objsize)
