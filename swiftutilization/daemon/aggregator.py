@@ -224,8 +224,8 @@ class UtilizationAggregator(Daemon):
         self.report()
 
     def account_info(self, tenant_id, timestamp):
-        path = '/v1/%s/%s?prefix=usage/%d' % (self.aggregate_account,
-                                              tenant_id, timestamp)
+        path = '/v1/%s/%s?prefix=usage/%d&limit=1' % (self.aggregate_account,
+                                                      tenant_id, timestamp)
         resp = self.swift.make_request('GET', path, {}, (2,))
         usages = resp.body.split('/', 2)[2].rstrip()
         cont_cnt, obj_cnt, bt_used = usages.split('_')
