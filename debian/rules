@@ -11,5 +11,5 @@ override_dh_install:
 	install -D -m 0640 $(CURDIR)/debian/swift-utilization-aggregator.conf $(CURDIR)/debian/swift-utilization-aggregator/etc/swift/swift-utilization-aggregator.conf
 
 override_dh_installinit:
-    dh_installinit --no-start
+	dh_installinit --no-start
 	dh_installinit --no-start --name=swift-utilization-aggregator
