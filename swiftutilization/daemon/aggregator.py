@@ -112,14 +112,16 @@ class UtilizationAggregator(Daemon):
                         _('Exception while deleting container %s %s') %
                         (container, str(err)))
 
-            # fillup lossed usage data
+            tenants_to_fillup = list()
             for c in self.swift.iter_containers(self.aggregate_account):
                 tenant_id = c['name']
                 if processes > 0:
-                    obj_proc = int(hashlib.md5(tenant_id).hexdigest(), 16)
-                    if obj_proc % processes != process:
+                    c_proc = int(hashlib.md5(tenant_id).hexdigest(), 16)
+                    if c_proc % processes != process:
                         continue
-                self.fillup_lossed_usage_data(tenant_id)
+                    tenants_to_fillup.append(tenant_id)
+            # fillup lossed usage data
+            self.fillup_lossed_usage_data(tenants_to_fillup)
 
             self.logger.debug(_('Run end'))
             self.report(final=True)
@@ -187,18 +189,14 @@ class UtilizationAggregator(Daemon):
             bytes_recvs = dict()
             bytes_sents = dict()
 
-            timestamp, tenant_id, account = container.split('_', 2)
-            timestamp = int(float(timestamp))
+            ts, tenant_id, account = container.split('_', 2)
+            ts = int(float(ts))
 
             for o in self.swift.iter_objects(self.sample_account, container):
                 name = o['name']
                 objs_to_delete.append(name)
                 ts, bytes_rv, bytes_st, trans_id, client_ip = name.split('/')
-
-
-                bill_type = self.get_billtype_by_client_ip(client_ip,
-                                                           timestamp)
-
+                bill_type = self.get_billtype_by_client_ip(client_ip, ts)
                 bytes_recvs[bill_type] = bytes_recvs.get(bill_type,
                                                          0) + int(bytes_rv)
                 bytes_sents[bill_type] = bytes_sents.get(bill_type,
@@ -209,8 +207,7 @@ class UtilizationAggregator(Daemon):
                 self.swift.delete_object(self.sample_account, container, o)
 
             for bill_type, bt_rv in bytes_recvs.items():
-                t_object = 'transfer/%d/%d/%d_%d_%d' % (timestamp, bill_type,
-                                                        bt_rv,
+                t_object = 'transfer/%d/%d/%d_%d_%d' % (ts, bill_type, bt_rv,
                                                         bytes_sents[bill_type],
                                                         self.report_objects)
                 self._hidden_update(tenant_id, t_object)
@@ -227,6 +224,8 @@ class UtilizationAggregator(Daemon):
         path = '/v1/%s/%s?prefix=usage/%d&limit=1' % (self.aggregate_account,
                                                       tenant_id, timestamp)
         resp = self.swift.make_request('GET', path, {}, (2,))
+        if len(resp.body) == 0:
+            return 0, 0, 0
         usages = resp.body.split('/', 2)[2].rstrip()
         cont_cnt, obj_cnt, bt_used = usages.split('_')
         return int(cont_cnt), int(obj_cnt), int(bt_used)
@@ -235,7 +234,6 @@ class UtilizationAggregator(Daemon):
         hidden_path = '/%s/%s/%s' % (self.aggregate_account, container, obj)
         part, nodes = self.container_ring.get_nodes(self.aggregate_account,
                                                     container)
-
         for node in nodes:
             ip = node['ip']
             port = node['port']
@@ -253,23 +251,32 @@ class UtilizationAggregator(Daemon):
             response = conn.getresponse()
             response.read()
 
-    def fillup_lossed_usage_data(self, tenant_id):
+    def fillup_lossed_usage_data(self, tenants):
         now = (float(time()) // self.sample_rate) * self.sample_rate
-        cont_cnt = 0
-        obj_cnt = 0
-        bt_used = 0
-        while self.last_chk <= now:
-            path = '/v1/%s/%s?prefix=usage/%d' % (self.aggregate_account,
-                                                  tenant_id, self.last_chk)
-            resp = self.swift.make_request('GET', path, {}, (2,))
-            if len(resp.body) != 0:
-                cont_cnt, obj_cnt, bt_used = self.account_info(tenant_id,
-                                                               self.last_chk)
-            else:
-                obj = 'usage/%d/%d_%d_%d' % (self.last_chk, cont_cnt,
-                                             obj_cnt, bt_used)
-                self._hidden_update(tenant_id, obj)
-            self.last_chk += self.sample_rate
+        path = '/v1/%s/%s?prefix=usage/%d&limit=1'
+
+        for t in tenants:
+            last = self.last_chk
+            cont_cnt = obj_cnt = bt_used = -1
+            while last <= now:
+                p = path % (self.aggregate_account, t, last)
+                resp = self.swift.make_request('GET', p, {}, (2,))
+                if len(resp.body) != 0:
+                    usages = resp.body.split('/', 2)[2].rstrip()
+                    c, o, bt = usages.split('_')
+                    cont_cnt = int(c)
+                    obj_cnt = int(o)
+                    bt_used = int(bt)
+                else:
+                    before = last - self.sample_rate
+                    if cont_cnt == -1:
+                        cont_cnt, obj_cnt, bt_used = \
+                            self.account_info(self.aggregate_account, before)
+                    obj = 'usage/%d/%d_%d_%d' % (last, cont_cnt, obj_cnt,
+                                                 bt_used)
+                    self._hidden_update(t, obj)
+                last += self.sample_rate
+        self.last_chk = now
 
     def get_billtype_by_client_ip(self, client_ip, timestamp):
         end_ts = timestamp_to_iso8601(timestamp + self.sample_rate - 1)
@@ -285,7 +292,7 @@ class UtilizationAggregator(Daemon):
             for cidr in r['ip_range']:
                 if self.ip_in_cidr(client_ip, cidr):
                     return bill_type
-        return -1
+        return bill_type
 
     def ip_in_cidr(self, client_ip, cidr):
         bt_to_bits = lambda b: bin(int(b))[2:].rjust(8, '0')

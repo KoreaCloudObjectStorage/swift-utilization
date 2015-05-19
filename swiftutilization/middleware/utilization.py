@@ -103,7 +103,7 @@ class UtilizationMiddleware(object):
             else:
                 break
 
-    def retrive_utilization_data(self, env, tenant_id, start, end, count):
+    def retrieve_utilization_data(self, env, tenant_id, start, end, count):
         path = '/v1/%s/%s' % (self.aggregate_account, tenant_id)
         data = dict()
         data['transfer'] = {}
@@ -178,10 +178,16 @@ class UtilizationMiddleware(object):
                             content_type="text/plain",
                             body="This tenant_id never used.")
 
-        # start time is "rounded down"
-        start_ts = iso8601_to_timestamp(start)
-        # end time is "rounded up"
-        end_ts = iso8601_to_timestamp(end)
+        try:
+            # start time is "rounded down"
+            start_ts = iso8601_to_timestamp(start)
+            # end time is "rounded up"
+            end_ts = iso8601_to_timestamp(end)
+        except ValueError:
+            return Response(status="400 Bad Request",
+                            content_type="text/plain",
+                            body="start or end time is incorrect format."
+                                 "please check start or end parameter")
         if start_ts > end_ts:
             return Response(status="400 Bad Request",
                             content_type="text/plain",
@@ -192,12 +198,8 @@ class UtilizationMiddleware(object):
 
         objsize = (end_ts - start_ts) / self.sample_rate
 
-        content = self.retrive_utilization_data(req.environ.copy(), tenant_id,
-                                                start_ts, end_ts, objsize)
-        if content is None:
-            return Response(request=req, status="500 Server Error",
-                            body="Internal server error.",
-                            content_type="text/plain")
+        content = self.retrieve_utilization_data(req.environ.copy(), tenant_id,
+                                                 start_ts, end_ts, objsize)
 
         content['period_start'] = timestamp_to_iso8601(start_ts)
         content['period_end'] = timestamp_to_iso8601(end_ts)
