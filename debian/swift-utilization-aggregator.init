@@ -1,0 +1,43 @@
+#! /bin/sh
+### BEGIN INIT INFO
+# Provides:          swift-utilization-aggregator
+# Required-Start:    $remote_fs
+# Required-Stop:     $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Swift Utilization Aggregator
+# Description:       Utilization Aggregator for swift.
+### END INIT INFO
+
+SERVICE_NAME="swift-utilization-aggregator"
+PRINT_NAME="Swift Utilization Aggregator"
+
+. /lib/lsb/init-functions
+
+if ! [ -f "/etc/swift/swift-utilization-aggregator.conf" ] ; then
+    exit 6
+fi
+
+case "$1" in
+start)
+	log_daemon_msg "Starting Swift ${PRINT_NAME}"
+	/usr/bin/swift-utilization-aggregator /etc/swift/swift-utilization-aggregator.conf &
+	log_end_msg $?
+;;
+stop)
+	log_daemon_msg "Stopping Swift ${PRINT_NAME}"
+	PID=`ps -ef | grep '/usr/bin/python '$SCRIPT' '$CONF | head -1 | awk '{print $2}'`
+    kill -9 $PID
+	log_end_msg $?
+;;
+
+status)
+    exec /usr/bin/swift-init ${SERVICE_NAME} status
+;;
+*)
+	echo "Usage: $0 {start|stop}"
+	exit 1
+;;
+esac
+
+exit 0

@@ -1,0 +1,24 @@
+description "swift-utilization-aggregator"
+author "A2 company <a2company@a2company.co.kr>"
+
+start on runlevel [2345]
+stop on runlevel [016]
+
+pre-start script
+  CONF=/etc/swift/swift-utilization-aggregator.conf
+  SCRIPT=/usr/bin/swift-utilization-aggregator
+
+  if [ -f $CONF ]; then
+    exec $SCRIPT $CONF &
+  else
+    exit 1
+  fi
+end script
+
+post-stop script
+  CONF=/etc/swift/swift-utilization-aggregator.conf
+  SCRIPT=/usr/bin/swift-utilization-aggregator
+
+  PID=`ps -ef | grep '/usr/bin/python '$SCRIPT' '$CONF | head -1 | awk '{print $2}'`
+  kill -9 $PID
+end script
